@@ -34,6 +34,7 @@ except ImportError:
 import traits.api as t
 
 import hyperspy.api as hs
+from hyperspy.decorators import lazifyTestClass
 from hyperspy.drawing.utils import make_cmap, plot_RGB_map
 from hyperspy.tests.drawing.test_plot_signal import _TestPlot
 
@@ -333,6 +334,9 @@ class TestPlotNonUniformAxis:
         s2.plot(navigator=None)
         return s2._plot.signal_plot.figure
 
+    def test_plot_images(self):
+        hs.plot.plot_images(self.s.inav[0])
+
 
 @pytest.mark.mpl_image_compare(
     baseline_dir=baseline_dir, tolerance=default_tol, style=style_pytest_mpl
@@ -604,6 +608,18 @@ def test_plot_images_tranpose():
     hs.plot.plot_images([a, b])
 
 
+def test_plot_images_update():
+    s = hs.signals.Signal2D(np.arange(100).reshape(10, 10))
+    s2 = s / 2
+    axs = hs.plot.plot_images([s, s2])
+
+    s.data = -s.data - 10
+    s.events.data_changed.trigger(s)
+
+    np.testing.assert_allclose(axs[0].images[0].get_array()[0, :2], [-10, -11])
+    np.testing.assert_allclose(axs[1].images[0].get_array()[0, :2], [0, 0.5])
+
+
 # Ignore numpy warning about clipping np.nan values
 @pytest.mark.filterwarnings("ignore:Passing `np.nan` to mean no clipping in np.clip")
 def test_plot_with_non_finite_value():
@@ -831,3 +847,151 @@ def test_plot_images_bool():
     s = hs.signals.Signal2D(data)
 
     hs.plot.plot_images(s)
+
+
+def test_plot_static_signal_nav():
+    s = hs.signals.Signal2D(np.ones((20, 20, 10, 10)))
+    nav = hs.signals.Signal2D(np.ones((20, 20)))
+    s.plot(navigator=nav)
+
+
+@lazifyTestClass
+class TestDynamicNavigatorPlot:
+    def setup_method(self, method):
+        self.signal5d2d = hs.signals.Signal2D(
+            np.arange((10**5)).reshape(
+                (
+                    10,
+                    10,
+                    10,
+                    10,
+                    10,
+                )
+            )
+        )
+        self.signal6d2d = hs.signals.Signal2D(
+            np.arange((10**6)).reshape((10, 10, 10, 10, 10, 10))
+        )
+        self.signal4d1d = hs.signals.Signal1D(
+            np.arange((10**4)).reshape((10, 10, 10, 10))
+        )
+        self.signal5d1d = hs.signals.Signal1D(
+            np.arange((10**5)).reshape(
+                (
+                    10,
+                    10,
+                    10,
+                    10,
+                    10,
+                )
+            )
+        )
+
+    def test_plot_5d(self):
+        import numpy as np
+
+        import hyperspy.api as hs
+
+        s = self.signal5d2d
+        nav = hs.signals.BaseSignal(np.arange((10 * 10 * 10)).reshape(10, 10, 10))
+        s.plot(navigator=nav)
+        data1 = s._plot.navigator_plot._current_data
+        s.axes_manager.indices = (0, 0, 1)
+        data2 = s._plot.navigator_plot._current_data
+        assert not np.array_equal(data1, data2)
+        s.axes_manager.indices = (0, 2, 1)
+        data3 = s._plot.navigator_plot._current_data
+        assert np.array_equal(data2, data3)
+
+    def test_plot_5d_2(self):
+        import numpy as np
+
+        import hyperspy.api as hs
+
+        s = self.signal5d2d
+        nav = hs.signals.Signal2D(np.arange((10 * 10 * 10)).reshape(10, 10, 10))
+        s.plot(navigator=nav)
+        data1 = s._plot.navigator_plot._current_data
+        s.axes_manager.indices = (0, 0, 1)
+        data2 = s._plot.navigator_plot._current_data
+        assert not np.array_equal(data1, data2)
+        s.axes_manager.indices = (0, 2, 1)
+        data3 = s._plot.navigator_plot._current_data
+        assert np.array_equal(data2, data3)
+
+    def test_plot_6d(self):
+        import numpy as np
+
+        import hyperspy.api as hs
+
+        s = self.signal6d2d
+        nav = hs.signals.BaseSignal(
+            np.arange((10 * 10 * 10 * 10)).reshape(10, 10, 10, 10)
+        )
+        s.plot(navigator=nav)
+        data1 = s._plot.navigator_plot._current_data
+        s.axes_manager.indices = (0, 0, 0, 1)
+        data2 = s._plot.navigator_plot._current_data
+        assert not np.array_equal(data1, data2)
+        s.axes_manager.indices = (0, 2, 0, 1)
+        data3 = s._plot.navigator_plot._current_data
+        assert np.array_equal(data2, data3)
+
+    def test_plot_4d_1dSignal(self):
+        import numpy as np
+
+        import hyperspy.api as hs
+
+        s = self.signal4d1d
+        nav = hs.signals.BaseSignal(np.arange((10 * 10 * 10)).reshape(10, 10, 10))
+        s.plot(navigator=nav)
+        data1 = s._plot.navigator_plot._current_data
+        s.axes_manager.indices = (0, 0, 1)
+        data2 = s._plot.navigator_plot._current_data
+        assert not np.array_equal(data1, data2)
+        s.axes_manager.indices = (0, 2, 1)
+        data3 = s._plot.navigator_plot._current_data
+        assert np.array_equal(data2, data3)
+
+    def test_plot_5d_1dsignal(self):
+        import numpy as np
+
+        import hyperspy.api as hs
+
+        s = self.signal5d1d
+        nav = hs.signals.BaseSignal(
+            np.arange((10 * 10 * 10 * 10)).reshape(10, 10, 10, 10)
+        )
+        s.plot(navigator=nav)
+        data1 = s._plot.navigator_plot._current_data
+        s.axes_manager.indices = (0, 0, 0, 1)
+        data2 = s._plot.navigator_plot._current_data
+        assert not np.array_equal(data1, data2)
+        s.axes_manager.indices = (0, 2, 0, 1)
+        data3 = s._plot.navigator_plot._current_data
+        assert np.array_equal(data2, data3)
+
+
+@pytest.mark.parametrize("axes_decor", ["all", "ticks", "off", None])
+def test_plot_images_axes_ticks(axes_decor):
+    # Axes ticks should be the same with `plot_images` and `Signal2D.plot`
+
+    data = np.arange(100).reshape(10, 10)
+
+    positive_axis = {"scale": 1, "size": 10, "name": "positive", "units": "px"}
+    negative_axis = {"scale": -1, "size": 10, "name": "negative", "units": "px"}
+
+    s = hs.signals.Signal2D(data, axes=[positive_axis, negative_axis])
+
+    # No colorbar to ensure we can get the correct axis with plt.gca
+    s.plot(axes_ticks=True, colorbar=False, title="")
+    plot_ax = plt.gca()
+
+    (plot_images_ax,) = hs.plot.plot_images(
+        s, colorbar=False, label="", axes_decor=axes_decor
+    )
+
+    assert np.allclose(plot_ax.get_xticks(), plot_images_ax.get_xticks())
+    assert np.allclose(plot_ax.get_yticks(), plot_images_ax.get_yticks())
+    assert np.allclose(plot_ax.get_xlim(), plot_images_ax.get_xlim())
+    assert np.allclose(plot_ax.get_ylim(), plot_images_ax.get_ylim())

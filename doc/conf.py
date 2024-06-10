@@ -208,7 +208,7 @@ html_theme_options = {
         "version_match": version_match,
     },
     "navbar_start": ["navbar-logo", "version-switcher"],
-    "announcement": "HyperSpy API is changing in version 2.0, see the <a href='https://hyperspy.org/hyperspy-doc/current/changes.html'>release notes!</a>",
+    "announcement": "HyperSpy API has changed in version 2.0, see the <a href='https://hyperspy.org/hyperspy-doc/current/changes.html#changes-2-0'>release notes!</a>",
 }
 # If not '', a 'Last updated on:' timestamp is inserted at every page bottom,
 # using the given strftime format.
@@ -329,6 +329,7 @@ intersphinx_mapping = {
     "mdp": ("https://mdp-toolkit.github.io/", None),
     "matplotlib": ("https://matplotlib.org/stable", None),
     "numpy": ("https://numpy.org/doc/stable", None),
+    "pint": ("https://pint.readthedocs.io/en/stable", None),
     "python": ("https://docs.python.org/3", None),
     "rsciio": ("https://hyperspy.org/rosettasciio/", None),
     "scipy": ("https://docs.scipy.org/doc/scipy", None),
@@ -415,6 +416,12 @@ sphinx_gallery_conf = {
     "gallery_dirs": "auto_examples",  # path to where to save gallery generated output
     "filename_pattern": ".py",  # pattern to define which will be executed
     "ignore_pattern": "_sgskip.py",  # pattern to define which will not be executed
+    "compress_images": (
+        "images",
+        "thumbnails",
+    ),  # use optipng to reduce image file size
+    "notebook_images": "https://hyperspy.org/hyperspy-doc/current/",  # folder for loading images in gallery
+    "reference_url": {"hyperspy": None},
 }
 
 graphviz_output_format = "svg"

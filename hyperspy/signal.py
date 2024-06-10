@@ -41,7 +41,7 @@ from scipy import signal as sp_signal
 from scipy.interpolate import make_interp_spline
 from tlz import concat
 
-from hyperspy.api_nogui import _ureg
+from hyperspy.api import _ureg
 from hyperspy.axes import AxesManager, create_axis
 from hyperspy.docstrings.plot import (
     BASE_PLOT_DOCSTRING,
@@ -3065,15 +3065,22 @@ class BaseSignal(
             navigator = sum_wrapper(self, am.signal_axes + am.navigation_axes[1:])
             return np.nan_to_num(to_numpy(navigator.data)).squeeze()
 
-        def get_dynamic_explorer_wrapper(*args, **kwargs):
-            navigator.axes_manager.indices = self.axes_manager.indices[
-                navigator.axes_manager.signal_dimension :
-            ]
-            navigator.axes_manager._update_attributes()
-            if np.issubdtype(navigator._get_current_data().dtype, np.complexfloating):
-                return abs(navigator._get_current_data(as_numpy=True))
-            else:
-                return navigator(as_numpy=True)
+        def get_dynamic_image_explorer(*args, **kwargs):
+            am = self.axes_manager
+            nav_ind = am.indices[2:]  # image at first 2 nav indices
+            slices = [slice(None)] * len(am.navigation_axes)
+            slices[2:] = nav_ind
+            new_nav = navigator.transpose(
+                signal_axes=len(am.navigation_axes)
+            )  # roll axes to signal axes
+            ind = new_nav.isig.__getitem__(
+                slices=slices
+            )  # Get the value from the nav reverse because hyperspy
+            return np.nan_to_num(to_numpy(ind.data)).squeeze()
+
+        # function to disconnect when closing the navigator
+        function_to_disconnect = None
+        connected_event_copy = self.events.data_changed.connected.copy()
 
         if not isinstance(navigator, BaseSignal) and navigator == "auto":
             if self.navigator is not None:
@@ -3100,6 +3107,11 @@ class BaseSignal(
                         s=self,
                         axis=self.axes_manager.signal_axes,
                     )
+                    # Sets are not ordered, to retrieve the function to disconnect
+                    # take the difference with the previous copy
+                    function_to_disconnect = list(
+                        self.events.data_changed.connected - connected_event_copy
+                    )[0]
                 if navigator.axes_manager.navigation_dimension == 1:
                     navigator = interactive(
                         f=navigator.as_signal1D,
@@ -3133,21 +3145,20 @@ class BaseSignal(
                 if is_shape_compatible(
                     axes_manager.navigation_shape, navigator.axes_manager.signal_shape
                 ):
-                    self._plot.navigator_data_function = get_static_explorer_wrapper
+                    if len(axes_manager.navigation_shape) > 2:
+                        self._plot.navigator_data_function = get_dynamic_image_explorer
+                    else:
+                        self._plot.navigator_data_function = get_static_explorer_wrapper
                 # Static transposed navigator
                 elif is_shape_compatible(
                     axes_manager.navigation_shape,
                     navigator.axes_manager.navigation_shape,
                 ):
                     navigator = navigator.T
-                    self._plot.navigator_data_function = get_static_explorer_wrapper
-                # Dynamic navigator
-                elif (
-                    axes_manager.navigation_shape
-                    == navigator.axes_manager.signal_shape
-                    + navigator.axes_manager.navigation_shape
-                ):
-                    self._plot.navigator_data_function = get_dynamic_explorer_wrapper
+                    if len(axes_manager.navigation_shape) > 2:
+                        self._plot.navigator_data_function = get_dynamic_image_explorer
+                    else:
+                        self._plot.navigator_data_function = get_static_explorer_wrapper
                 else:
                     raise ValueError(
                         "The dimensions of the provided (or stored) navigator "
@@ -3178,6 +3189,7 @@ class BaseSignal(
         self._plot.plot(**kwargs)
         self.events.data_changed.connect(self.update_plot, [])
 
+        # Disconnect event when closing signal
         p = (
             self._plot.signal_plot
             if self._plot.signal_plot
@@ -3186,6 +3198,17 @@ class BaseSignal(
         p.events.closed.connect(
             lambda: self.events.data_changed.disconnect(self.update_plot), []
         )
+        # Disconnect events to the navigator when closing navigator
+        if function_to_disconnect is not None:
+            self._plot.navigator_plot.events.closed.connect(
+                lambda: self.events.data_changed.disconnect(function_to_disconnect), []
+            )
+            self._plot.navigator_plot.events.closed.connect(
+                lambda: self.axes_manager.events.any_axis_changed.disconnect(
+                    function_to_disconnect
+                ),
+                [],
+            )
 
         if plot_markers:
             if self.metadata.has_item("Markers"):
@@ -5677,10 +5700,16 @@ class BaseSignal(
                         "Only signals with dtype uint16 can be converted to "
                         "rgb16 images"
                     )
+                replot = self._plot is not None and self._plot.is_active
+                if replot:
+                    # Close the figure to avoid error with events
+                    self._plot.close()
                 self.data = rgb_tools.regular_array2rgbx(self.data)
                 self.axes_manager.remove(-1)
                 self.axes_manager._set_signal_dimension(2)
                 self._assign_subclass()
+                if replot:
+                    self.plot()
                 return
             else:
                 dtype = np.dtype(dtype)
@@ -5689,6 +5718,10 @@ class BaseSignal(
 
             if ddtype != dtype:
                 raise ValueError("It is only possibile to change to %s." % ddtype)
+            replot = self._plot is not None and self._plot.is_active
+            if replot:
+                # Close the figure to avoid error with events
+                self._plot.close()
             self.data = rgb_tools.rgbx2regular_array(self.data)
             self.axes_manager._append_axis(
                 size=self.data.shape[-1],
@@ -5699,6 +5732,8 @@ class BaseSignal(
             )
             self.axes_manager._set_signal_dimension(1)
             self._assign_subclass()
+            if replot:
+                self.plot()
             return
         else:
             self.data = self.data.astype(dtype)
@@ -6515,17 +6550,14 @@ class BaseSignal(
     def add_poissonian_noise(self, keep_dtype=True, random_state=None):
         """Add Poissonian noise to the data.
 
-        This method works in-place. The resulting data type is ``int64``.
-        If this is different from the original data type then a warning
-        is added to the log.
+        This method works in-place.
 
         Parameters
         ----------
         keep_dtype : bool, default True
-            If ``True``, keep the original data type of the signal data. For
-            example, if the data type was initially ``'float64'``, the result of
-            the operation (usually ``'int64'``) will be converted to
-            ``'float64'``.
+            This parameter is deprecated and will be removed in HyperSpy 3.0.
+            Currently, it does not have any effect. This method always
+            keeps the original dtype of the signal.
         random_state : None, int or numpy.random.Generator, default None
             Seed for the random generator.
 
@@ -6538,28 +6570,17 @@ class BaseSignal(
         """
         kwargs = {}
         random_state = check_random_state(random_state, lazy=self._lazy)
+        if not keep_dtype:
+            warnings.warn(
+                "The `keep_dtype` parameter is deprecated and will be removed in HyperSpy 3.0.",
+                DeprecationWarning,
+            )
 
         if self._lazy:
             kwargs["chunks"] = self.data.chunks
 
-        original_dtype = self.data.dtype
-
-        self.data = random_state.poisson(lam=self.data, **kwargs)
-
-        if self.data.dtype != original_dtype:
-            if keep_dtype:
-                _logger.warning(
-                    f"Changing data type from {self.data.dtype} "
-                    f"to the original {original_dtype}"
-                )
-                # Don't change the object if possible
-                self.data = self.data.astype(original_dtype, copy=False)
-            else:
-                _logger.warning(
-                    f"The data type changed from {original_dtype} "
-                    f"to {self.data.dtype}"
-                )
-
+        self.data[:] = random_state.poisson(lam=self.data, **kwargs)
+        self.events.data_changed.trigger(obj=self)
         self.events.data_changed.trigger(obj=self)
 
     def add_gaussian_noise(self, std, random_state=None):
@@ -6600,12 +6621,8 @@ class BaseSignal(
 
         noise = random_state.normal(loc=0, scale=std, size=self.data.shape, **kwargs)
 
-        if self._lazy:
-            # With lazy data we can't keep the same array object
-            self.data = self.data + noise
-        else:
-            # Don't change the object
-            self.data += noise
+        self.data += noise
+        self.events.data_changed.trigger(obj=self)
 
         self.events.data_changed.trigger(obj=self)
 
